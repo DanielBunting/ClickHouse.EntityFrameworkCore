@@ -24,6 +24,16 @@ public class ClickHouseSqlNullabilityProcessor : SqlNullabilityProcessor
         typeof(bool), typeof(string), typeof(Guid),
     ];
 
+    // The array mappings bound to collection parameters, cached per element mapping: constructing one
+    // builds a reflection-based ValueComparer, and this processor runs per execution (the command
+    // cache treats collection-parameter queries as value-sensitive). Keyed by mapping instance, which
+    // repeats because the type mapping source caches element mappings.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<RelationalTypeMapping, ClickHouseArrayParameterTypeMapping>
+        ParameterArrayMappings = new();
+
+    private static ClickHouseArrayParameterTypeMapping GetParameterArrayMapping(RelationalTypeMapping elementMapping)
+        => ParameterArrayMappings.GetOrAdd(elementMapping, static m => new ClickHouseArrayParameterTypeMapping(m));
+
     public ClickHouseSqlNullabilityProcessor(
         RelationalParameterBasedSqlProcessorDependencies dependencies,
         RelationalParameterBasedSqlProcessorParameters parameters)
@@ -109,7 +119,7 @@ public class ClickHouseSqlNullabilityProcessor : SqlNullabilityProcessor
         // `has(array, non-null item)` is never NULL and matches `item IN (...)` for a non-null item.
         nullable = false;
 
-        var arrayMapping = new ClickHouseArrayTypeMapping(elementMapping);
+        var arrayMapping = GetParameterArrayMapping(elementMapping);
         var arrayParameter = valuesParameter.ApplyTypeMapping(arrayMapping);
         var alignedItem = Dependencies.SqlExpressionFactory.ApplyTypeMapping(item, elementMapping)!;
 

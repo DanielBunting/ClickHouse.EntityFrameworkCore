@@ -370,4 +370,73 @@ public class ParameterizedContainsTests : IClassFixture<ParamContainsFixture>
         var rows = await query.OrderBy(e => e.Id).Select(e => e.Id).ToListAsync();
         Assert.Equal([2L, 3L], rows);
     }
+
+    // The tests below pin captured-collection shapes that EF's per-element expansion supported and
+    // that the array-parameter path must keep working. The driver's parameter formatter only
+    // serializes arrays and List<T>, and throws on null elements, so ClickHouseArrayParameterTypeMapping
+    // normalizes the bound value to a null-free T[] at binding time — these tests cover that
+    // normalization end-to-end.
+
+    [Fact]
+    public async Task HashSet_Collection_Matches()
+    {
+        await using var ctx = new ParamContainsDbContext(_fixture.ConnectionString);
+        var ids = new HashSet<long> { 1L, 3L };
+
+        // Driver 1.1.0 cannot serialize HashSet<T> itself; binding normalizes it to long[].
+        var query = ctx.Entities.Where(e => ids.Contains(e.Id));
+        Assert.Contains("has({", query.ToQueryString());
+
+        var rows = await query.OrderBy(e => e.Id).Select(e => e.Id).ToListAsync();
+        Assert.Equal([1L, 3L], rows);
+    }
+
+    [Fact]
+    public async Task LazyEnumerable_Collection_Matches()
+    {
+        await using var ctx = new ParamContainsDbContext(_fixture.ConnectionString);
+        var ids = Enumerable.Range(1, 3).Where(i => i != 2).Select(i => (long)i);
+
+        // A lazy (iterator) capture reaches binding as its iterator type, which the driver cannot
+        // serialize; normalization materializes it to long[].
+        var query = ctx.Entities.Where(e => ids.Contains(e.Id));
+        Assert.Contains("has({", query.ToQueryString());
+
+        var rows = await query.OrderBy(e => e.Id).Select(e => e.Id).ToListAsync();
+        Assert.Equal([1L, 3L], rows);
+    }
+
+    [Fact]
+    public async Task StringCollection_WithNullElement_MatchesNonNullValues()
+    {
+        await using var ctx = new ParamContainsDbContext(_fixture.ConnectionString);
+        var names = new List<string?> { "alpha", null };
+
+        // .NET semantics: a null element never matches a non-nullable column, so the expected
+        // result is just the "alpha" row. Normalization strips the null before the driver sees it
+        // (the driver throws NullReferenceException on a null string element) — mirroring the
+        // null-stripping EF's per-element expansion performs for a non-nullable item.
+        var query = ctx.Entities.Where(e => names.Contains(e.StrVal));
+        Assert.Contains("has({", query.ToQueryString());
+
+        var rows = await query.OrderBy(e => e.Id).Select(e => e.Id).ToListAsync();
+        Assert.Equal([1L], rows);
+    }
+
+    [Fact]
+    public async Task StringCollection_WithNullElement_NegatedMatchesComplement()
+    {
+        await using var ctx = new ParamContainsDbContext(_fixture.ConnectionString);
+        var names = new List<string?> { "alpha", null };
+
+        // .NET semantics for !Contains over a non-nullable column: every row whose value is not in
+        // the list matches, regardless of the null element. Stripping the null is safe under
+        // negation precisely because the tested column is non-nullable (the nullable-column case
+        // falls back to the base expansion before reaching the array parameter).
+        var query = ctx.Entities.Where(e => !names.Contains(e.StrVal));
+        Assert.Contains("has({", query.ToQueryString());
+
+        var rows = await query.OrderBy(e => e.Id).Select(e => e.Id).ToListAsync();
+        Assert.Equal([2L, 3L], rows);
+    }
 }
