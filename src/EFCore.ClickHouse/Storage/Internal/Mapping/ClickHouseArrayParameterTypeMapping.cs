@@ -28,17 +28,20 @@ namespace ClickHouse.EntityFrameworkCore.Storage.Internal.Mapping;
 public class ClickHouseArrayParameterTypeMapping : ClickHouseArrayTypeMapping
 {
     private readonly Type _elementType;
+    private readonly Type _elementArrayType;
 
     public ClickHouseArrayParameterTypeMapping(RelationalTypeMapping elementMapping)
         : base(elementMapping)
     {
         _elementType = Nullable.GetUnderlyingType(elementMapping.ClrType) ?? elementMapping.ClrType;
+        _elementArrayType = _elementType.MakeArrayType();
     }
 
     protected ClickHouseArrayParameterTypeMapping(RelationalTypeMappingParameters parameters, RelationalTypeMapping elementMapping)
         : base(parameters, elementMapping)
     {
         _elementType = Nullable.GetUnderlyingType(elementMapping.ClrType) ?? elementMapping.ClrType;
+        _elementArrayType = _elementType.MakeArrayType();
     }
 
     protected override RelationalTypeMapping Clone(RelationalTypeMappingParameters parameters)
@@ -62,7 +65,7 @@ public class ClickHouseArrayParameterTypeMapping : ClickHouseArrayTypeMapping
         // Fast path: a T[] of a non-nullable value type can neither contain nulls nor need
         // reshaping, so the common captured-array case binds zero-copy. Reference-type arrays
         // (string[]) still take the scan below because their elements can be null.
-        if (_elementType.IsValueType && value.GetType() == _elementType.MakeArrayType())
+        if (_elementType.IsValueType && value.GetType() == _elementArrayType)
         {
             return value;
         }
